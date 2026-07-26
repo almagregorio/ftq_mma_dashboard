@@ -26,6 +26,9 @@ def procesar_datos_completos(filepath):
     df_prod.columns = ['Fecha', 'Semana', 'Linea', 'Maquina', 'Version', 'OK', 'NOK', 'Div', 'FTQ_Orig', 'Pct']
     
     df_prod = df_prod.dropna(subset=['Fecha', 'Version'])
+    df_prod['Version'] = df_prod['Version'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_prod['OK'] = pd.to_numeric(df_prod['OK'], errors='coerce').fillna(0)
+
     df_prod['OK'] = pd.to_numeric(df_prod['OK'], errors='coerce').fillna(0)
     df_prod['NOK'] = pd.to_numeric(df_prod['NOK'], errors='coerce').fillna(0)
     df_prod['Fecha'] = pd.to_datetime(df_prod['Fecha'])
