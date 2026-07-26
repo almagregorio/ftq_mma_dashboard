@@ -42,6 +42,7 @@ def procesar_datos_completos(filepath):
     df_def = df_raw.iloc[:, 12:19].copy()
     df_def.columns = ['Fecha', 'Semana', 'Linea', 'Maquina', 'Version', 'Defecto', 'Cantidad']
     df_def = df_def.dropna(subset=['Defecto', 'Cantidad'])
+    df_def['Version'] = df_def['Version'].astype(str).str.replace(r'\.0$', '', regex=True)
     df_def['Cantidad'] = pd.to_numeric(df_def['Cantidad'], errors='coerce').fillna(0)
     df_def['Fecha'] = pd.to_datetime(df_def['Fecha'])
     df_def['Semana'] = pd.to_numeric(df_def['Semana'], errors='coerce').fillna(0).astype(int)
