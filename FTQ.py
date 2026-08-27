@@ -161,13 +161,13 @@ if os.path.exists(archivo_bd):
                         x=df_filtro['Semana_Str'], 
                         y=df_filtro['FTQ_Estacion'], 
                         mode='lines+markers', 
-                        name=f"{maq}" # Esto genera la leyenda por color
+                        name=f"{maq}"
                     ))
                 
                 fig_op.add_hline(y=95, line_color=COLOR_TARGET, annotation_text="Target 95%")
                 fig_op.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
                 
-                # Configuramos el diseño
+                # Diseño
                 fig_op.update_layout(
                     title=dict(text="Comparativo FTQ Semanal por Operación", font=dict(size=18, color=COLOR_KOSTAL)), 
                     yaxis_range=[min(tendencia_todas['FTQ_Estacion'].min()-5, 75), 115],
@@ -175,6 +175,25 @@ if os.path.exists(archivo_bd):
                     legend=dict(title="Estaciones")
                 )
                 st.plotly_chart(fig_op, use_container_width=True)
+
+                with st.expander("🔎 Ver detalle en tabla"):
+                    # 1. Crear tabla dinámica (Filas: Máquinas, Columnas: Semanas)
+                    tabla_detalle = df_op.groupby(['Maquina', 'Semana'])['FTQ_Estacion'].mean().unstack()
+                    
+                    # 2. Formatear los encabezados de las columnas para que digan "W30", "W31", etc.
+                    # Nota: Al estar agrupado por semana, omitimos "Fecha" diaria. La Versión ya está filtrada a nivel global.
+                    tabla_detalle.columns = [f"W{int(c)}" for c in tabla_detalle.columns]
+                    
+                    # 3. Función para pintar de amarillo el valor más bajo de cada columna (semana)
+                    def resaltar_minimo(s):
+                        es_minimo = s == s.min()
+                        return ['background-color: #ffe600; color: black; font-weight: bold' if v else '' for v in es_minimo]
+                    
+                    # 4. Aplicar los estilos: % con 1 decimal y la función de color
+                    tabla_estilizada = tabla_detalle.style.apply(resaltar_minimo, axis=0).format("{:.1f}%", na_rep="-")
+                    
+                    st.dataframe(tabla_estilizada, use_container_width=True)
+
             else:
                 st.info("No hay datos calculables para las operaciones.")
         
