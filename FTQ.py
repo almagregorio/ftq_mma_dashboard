@@ -84,13 +84,13 @@ if os.path.exists(archivo_bd):
     
     # --- MENÚ LATERAL: LÍNEA Y VERSIÓN ---
     st.sidebar.header("Filtros de Análisis")
-    linea_sel = st.sidebar.radio("Selecciona la Línea:", ["SCR (Espiral)", "SCCM"])
+    linea_sel = st.sidebar.radio("Selecciona la Línea:", ["SCR", "SCCM"])
     
     # Mapeo de versiones según la línea seleccionada
-    if linea_sel == "SCR (Espiral)":
+    if linea_sel == "SCR":
         versiones_permitidas = ["10532587"]
     else:
-        # Aquí puedes agregar las otras 3 versiones de SCCM cuando empiecen a correr separándolas por comas
+        #
         versiones_permitidas = ["12289497", "12289475"] 
 
     # Filtramos para mostrar solo las versiones que existen en la base de datos y que pertenecen a la línea elegida
@@ -107,7 +107,7 @@ if os.path.exists(archivo_bd):
         
         titulo_seccion = f"{linea_sel} - Versión {version_sel}"
         
-        # --- SECCIÓN 1: ANÁLISIS GENERAL ---
+        # ANÁLISIS GENERAL
         st.header(f"📈 Análisis General - {titulo_seccion}")
         
         resumen_gen = []
@@ -122,7 +122,7 @@ if os.path.exists(archivo_bd):
             
             sem_data = df_ftq_l[df_ftq_l['Mes_Num'] == ultimo_mes].groupby('Semana')['FTQ'].mean().reset_index()
             for _, r in sem_data.iterrows(): resumen_gen.append({'P': f"W{int(r['Semana'])}", 'V': r['FTQ']})
-        
+    
         df_g = pd.DataFrame(resumen_gen)
         
         if not df_g.empty:
@@ -139,32 +139,48 @@ if os.path.exists(archivo_bd):
 
         st.divider()
 
-        # --- SECCIÓN 2: DESGLOSE POR OPERACIÓN ---
-        st.header("⚙️ FTQ por Operación")
-        st.markdown("Selecciona una estación para ver su rendimiento (FTQ) a lo largo de las semanas.")
+        # DESGLOSE POR OPERACIÓN
+        st.header("⚙️ FTQ por Operación (Comparativo)")
+        st.markdown("Evolución semanal del FTQ simultánea para todas las estaciones.")
         
         if not df_prod_l.empty:
-            operaciones_disponibles = sorted(df_prod_l['Maquina'].unique())
-            op_sel = st.selectbox("Seleccione Operación / Estación:", operaciones_disponibles)
-            
-            # Filtramos por la operación seleccionada y promediamos su FTQ por semana
-            df_op = df_prod_l[df_prod_l['Maquina'] == op_sel].copy()
+            # Calculamos el FTQ agrupando por Semana y Máquina a la vez
+            df_op = df_prod_l.copy()
             df_op['FTQ_Estacion'] = df_op['Factor'] * 100
-            tendencia_op = df_op.groupby('Semana')['FTQ_Estacion'].mean().reset_index()
-            tendencia_op['Semana_Str'] = "W" + tendencia_op['Semana'].astype(str)
+            tendencia_todas = df_op.groupby(['Semana', 'Maquina'])['FTQ_Estacion'].mean().reset_index()
+            tendencia_todas['Semana_Str'] = "W" + tendencia_todas['Semana'].astype(str)
 
-            if not tendencia_op.empty:
-                fig_op = go.Figure(go.Scatter(x=tendencia_op['Semana_Str'], y=tendencia_op['FTQ_Estacion'], mode='lines+markers+text', text=[f"{v:.1f}%" for v in tendencia_op['FTQ_Estacion']], textposition="top center", line=dict(color=COLOR_KOSTAL, width=3)))
-                fig_op.add_hline(y=95, line_color=COLOR_TARGET)
-                fig_op.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION)
-                fig_op.update_layout(title=dict(text=f"Tendencia FTQ - Operación {op_sel}", font=dict(size=18, color=COLOR_KOSTAL)), yaxis_range=[min(tendencia_op['FTQ_Estacion'].min()-5, 75), 115])
+            if not tendencia_todas.empty:
+                fig_op = go.Figure()
+                
+                # Iteramos por cada máquina para agregar su propia línea a la gráfica
+                maquinas_unicas = sorted(tendencia_todas['Maquina'].unique())
+                for maq in maquinas_unicas:
+                    df_filtro = tendencia_todas[tendencia_todas['Maquina'] == maq]
+                    fig_op.add_trace(go.Scatter(
+                        x=df_filtro['Semana_Str'], 
+                        y=df_filtro['FTQ_Estacion'], 
+                        mode='lines+markers', 
+                        name=f"{maq}" # Esto genera la leyenda por color
+                    ))
+                
+                fig_op.add_hline(y=95, line_color=COLOR_TARGET, annotation_text="Target 95%")
+                fig_op.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
+                
+                # Configuramos el diseño
+                fig_op.update_layout(
+                    title=dict(text="Comparativo FTQ Semanal por Operación", font=dict(size=18, color=COLOR_KOSTAL)), 
+                    yaxis_range=[min(tendencia_todas['FTQ_Estacion'].min()-5, 75), 115],
+                    hovermode="x unified", # Agrupa todos los porcentajes al pasar el mouse sobre un punto
+                    legend=dict(title="Estaciones")
+                )
                 st.plotly_chart(fig_op, use_container_width=True)
             else:
-                st.info(f"No hay datos de FTQ para la operación {op_sel}.")
+                st.info("No hay datos calculables para las operaciones.")
         
         st.divider()
 
-        # --- SECCIÓN 3: DETALLE SEMANAL ---
+        # DETALLE SEMANAL
         st.header(f"📅 Detalle Semanal")
         if not df_ftq_l.empty:
             sem_sel = st.selectbox("Seleccione Semana:", sorted(df_ftq_l['Semana'].unique()), index=len(df_ftq_l['Semana'].unique())-1)
