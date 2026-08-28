@@ -148,19 +148,25 @@ if os.path.exists(archivo_bd):
         
         if not df_prod_linea.empty:
             df_prod_linea['FTQ_Estacion'] = df_prod_linea['Factor'] * 100
+            df_prod_linea['Maquina'] = df_prod_linea['Maquina'].astype(str) # Aseguramos formato texto
             
+            # Paleta de distintos tonos de azul
             PALETA_AZULES = ["#004b87", "#3b82f6", "#87ceeb", "#1e3a8a", "#60a5fa", "#b0c4de"]
             
-            # GRÁFICAS POR SEMANA
+            # --- 1. GRÁFICAS POR SEMANA ---
             datos_semanales = df_prod_linea.groupby(['Semana', 'Fecha', 'Maquina', 'Version'])['FTQ_Estacion'].mean().reset_index()
             semanas_presentes = sorted(datos_semanales['Semana'].unique())
             
             for sem in semanas_presentes:
                 df_sem = datos_semanales[datos_semanales['Semana'] == sem].copy()
                 
+                # Ordenar máquinas secuencialmente (Limpia decimales ocultos como 100.0 a 100)
                 def ordenar_maquinas(m):
-                    try: return (0, int(m))
-                    except: return (1, str(m))
+                    try:
+                        m_clean = str(m).replace('.0', '')
+                        return (0, int(m_clean))
+                    except: 
+                        return (1, str(m))
                 orden_maquinas = [str(x) for x in sorted(df_sem['Maquina'].unique(), key=ordenar_maquinas)]
                 
                 titulo_grafica = f"Semana W{int(sem)} - Rendimiento por Operación"
@@ -171,62 +177,54 @@ if os.path.exists(archivo_bd):
                 for i, (_, row) in enumerate(corridas.iterrows()):
                     f = row['Fecha']
                     v = row['Version']
-                    df_corrida = df_sem[(df_sem['Fecha'] == f) & (df_sem['Version'] == v)]
+                    df_corrida = df_sem[(df_sem['Fecha'] == f) & (df_sem['Version'] == v)].copy()
                     
                     fecha_str = pd.to_datetime(f).strftime('%d/%m')
                     nombre_barra = f"{fecha_str} (Ver. {v})"
                     
-                    # Asignacion de color
                     color_barra = PALETA_AZULES[i % len(PALETA_AZULES)]
+                    
+                    min_ftq = df_corrida['FTQ_Estacion'].min()
+                    
+                    # 💡 SOLUCIÓN: Incrustamos el ⚠️ directamente en el texto del % de la barra afectada
+                    text_labels = []
+                    for val in df_corrida['FTQ_Estacion']:
+                        if pd.notna(val) and val == min_ftq:
+                            text_labels.append(f"⚠️<br>{val:.1f}%")
+                        else:
+                            text_labels.append(f"{val:.1f}%")
                     
                     fig_pareto.add_trace(go.Bar(
                         x=df_corrida['Maquina'].astype(str), 
                         y=df_corrida['FTQ_Estacion'], 
                         name=nombre_barra,
-                        text=[f"{val:.1f}%" for val in df_corrida['FTQ_Estacion']], 
+                        text=text_labels, 
                         textposition='auto',
-                        marker_color=color_barra
+                        marker_color=color_barra,
+                        textfont=dict(size=14)
                     ))
-                    
-                    # 3. Advertencia en FTQ bajo
-                    if not df_corrida.empty:
-                        min_ftq = df_corrida['FTQ_Estacion'].min()
-                        peor_maquina = df_corrida[df_corrida['FTQ_Estacion'] == min_ftq]['Maquina'].iloc[0]
-                        
-                        fig_pareto.add_annotation(
-                            x=str(peor_maquina),
-                            y=min_ftq,
-                            text="⚠️",
-                            showarrow=True,
-                            arrowhead=0,
-                            yshift=5,
-                            ax=0,
-                            ay=-30,
-                            font=dict(size=22),
-                            hovertext=f"Mayor ofensor del {fecha_str}"
-                        )
                 
                 fig_pareto.add_hline(y=95, line_color=COLOR_TARGET, annotation_text="Target 95%")
                 fig_pareto.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
                 
                 fig_pareto.update_layout(
                     title=dict(text=titulo_grafica, font=dict(size=16, color=COLOR_KOSTAL)), 
-                    yaxis=dict(title="FTQ (%)", range=[min(df_sem['FTQ_Estacion'].min()-5, 75), 125]),
+                    yaxis=dict(title="FTQ (%)", range=[min(df_sem['FTQ_Estacion'].min()-10, 70), 115]),
                     xaxis=dict(
                         title="Operación", 
                         type='category',
                         categoryorder='array',
-                        categoryarray=orden_maquinas
+                        categoryarray=orden_maquinas # Fuerza el orden correcto 100, 200...
                     ),
-                barmode='group', 
-                height=500,
-                margin=dict(l=50, r=50, t=50, b=50),
-                legend=dict(title="Día y Versión")
-            )
+                    barmode='group', 
+                    height=500,
+                    margin=dict(l=50, r=50, t=50, b=50),
+                    legend=dict(title="Día y Versión")
+                )
                 
-            st.plotly_chart(fig_pareto, use_container_width=True)
+                st.plotly_chart(fig_pareto, use_container_width=True)
                     
-            # --- 2. TABLA DE DETALLES (MÚLTIPLES VERSIONES - DÍA POR DÍA CON SEMANA) ---
+            # TABLA DE DETALLES 
             with st.expander("🔎 Ver detalle en tabla (Todas las versiones - Día por Día)"):
                 tabla_detalle = df_prod_linea.groupby(['Version', 'Maquina', 'Semana', 'Fecha'])['FTQ_Estacion'].mean().unstack(level=['Semana', 'Fecha'])
                 tabla_detalle = tabla_detalle.sort_index(axis=1)
