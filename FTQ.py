@@ -233,7 +233,7 @@ if os.path.exists(archivo_bd):
                 fig_pareto.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
                 
                 fig_pareto.update_layout(
-                    title=dict(title=f"Semana W{int(sem_actual)} - Rendimiento por operación", font=dict(size=16, color=COLOR_KOSTAL)), 
+                    title=dict(text=f"Semana W{int(sem_actual)} - Rendimiento por operación", font=dict(size=16, color=COLOR_KOSTAL)),
                     yaxis=dict(title="FTQ (%)", range=[min(df_sem['FTQ_Estacion'].min()-10, 70), 115]),
                     xaxis=dict(
                         title="Operación", 
