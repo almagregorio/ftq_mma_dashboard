@@ -76,7 +76,7 @@ def generar_grafica_operaciones(df, top_n, titulo):
     )
     return fig
 
-# --- RUTA DIRECTA DE LA BASE DE DATOS ---
+# Ruta a base de datos
 archivo_bd = "BASE DE DATOS.xlsx"
 
 if os.path.exists(archivo_bd):
@@ -93,7 +93,7 @@ if os.path.exists(archivo_bd):
         #
         versiones_permitidas = ["12289497", "12289475"] 
 
-    # Filtramos para mostrar solo las versiones que existen en la base de datos y que pertenecen a la línea elegida
+    # Filtramos para mostrar solo las versiones que existen y pertenecen a la línea elegida
     versiones_reales = df_ftq['Version'].dropna().unique()
     versiones_disponibles = [v for v in versiones_permitidas if v in versiones_reales]
 
@@ -140,104 +140,104 @@ if os.path.exists(archivo_bd):
         st.divider()
 
         # DESGLOSE POR OPERACIÓN - GRAFICA
-        st.header("⚙️ FTQ por Operación")
-        st.markdown("Rendimiento de calidad por estación día a día")
 
+        st.header("⚙️ FTQ por Operación")
+        st.markdown("Rendimiento de calidad por semana.")
+        
         df_prod_linea = df_prod[df_prod['Version'].isin(versiones_permitidas)].copy()
         
         if not df_prod_linea.empty:
             df_prod_linea['FTQ_Estacion'] = df_prod_linea['Factor'] * 100
             
-            # Agrupamos por Semana, Fecha y Máquina
-            datos_diarios = df_prod_linea.groupby(['Semana', 'Fecha', 'Maquina'])['FTQ_Estacion'].mean().reset_index()
-            semanas_presentes = sorted(datos_diarios['Semana'].unique())
+            # --- 1. GRÁFICAS PARETO POR SEMANA ---
+            datos_semanales = df_prod_linea.groupby(['Semana', 'Fecha', 'Maquina', 'Version'])['FTQ_Estacion'].mean().reset_index()
+            semanas_presentes = sorted(datos_semanales['Semana'].unique())
             
             for sem in semanas_presentes:
-                df_sem = datos_diarios[datos_diarios['Semana'] == sem]
-                fechas_presentes = sorted(df_sem['Fecha'].unique())
+                df_sem = datos_semanales[datos_semanales['Semana'] == sem].copy()
                 
-                for fecha in fechas_presentes:
-                    df_fecha = df_sem[df_sem['Fecha'] == fecha].copy()
+                # Determinamos el orden del Pareto (eje X) tomando el FTQ más bajo que haya tenido la máquina en toda la semana
+                orden_maquinas = df_sem.groupby('Maquina')['FTQ_Estacion'].min().sort_values().index.astype(str).tolist()
+                
+                titulo_grafica = f"Semana W{int(sem)} - Rendimiento por Operación"
+                fig_pareto = go.Figure()
+                
+                # Extraemos todas las corridas únicas (combinación de Fecha y Versión) de esa semana
+                corridas = df_sem[['Fecha', 'Version']].drop_duplicates().sort_values(by=['Fecha', 'Version'])
+                
+                for _, row in corridas.iterrows():
+                    f = row['Fecha']
+                    v = row['Version']
+                    df_corrida = df_sem[(df_sem['Fecha'] == f) & (df_sem['Version'] == v)]
                     
-                    # Ordenamos de menor a mayor para estilo Pareto de fallas (lo peor a la izquierda)
-                    df_fecha = df_fecha.sort_values('FTQ_Estacion', ascending=True)
-                    # df_fecha = df_fecha.long_values('FTQ_Estacion', descending=True) REVISAR*
+                    fecha_str = pd.to_datetime(f).strftime('%d/%m')
+                    nombre_barra = f"{fecha_str} (Ver. {v})"
                     
-                    fecha_str = pd.to_datetime(fecha).strftime('%d/%m/%Y')
-                    titulo_grafica = f"Semana W{int(sem)} - Fecha: {fecha_str}"
-                    
-                    fig_pareto = go.Figure(go.Bar(
-                        x=df_fecha['Maquina'].astype(str), 
-                        y=df_fecha['FTQ_Estacion'], 
-                        text=[f"{v:.1f}%" for v in df_fecha['FTQ_Estacion']], 
-                        textposition='auto', # Coloca el texto dentro de la barra automáticamente
-                        marker_color=COLOR_KOSTAL
+                    fig_pareto.add_trace(go.Bar(
+                        x=df_corrida['Maquina'].astype(str), 
+                        y=df_corrida['FTQ_Estacion'], 
+                        name=nombre_barra,
+                        text=[f"{val:.1f}%" for val in df_corrida['FTQ_Estacion']], 
+                        textposition='auto'
                     ))
+                
+                fig_pareto.add_hline(y=95, line_color=COLOR_TARGET, annotation_text="Target 95%")
+                fig_pareto.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
+                
+                fig_pareto.update_layout(
+                    title=dict(text=titulo_grafica, font=dict(size=16, color=COLOR_KOSTAL)), 
+                    yaxis=dict(title="FTQ (%)", range=[min(df_sem['FTQ_Estacion'].min()-5, 75), 115]),
+                    xaxis=dict(
+                        title="Operación", 
+                        type='category',
+                        categoryorder='array',
+                        categoryarray=orden_maquinas
+                    ),
+                    barmode='group', # Agrupa todas las barras de las distintas corridas en su respectiva máquina
+                    height=500,
+                    margin=dict(l=50, r=50, t=50, b=50),
+                    legend=dict(title="Día y Versión")
+                )
+                
+                st.plotly_chart(fig_pareto, use_container_width=True)
                     
-                    fig_pareto.add_hline(y=95, line_color=COLOR_TARGET, annotation_text="Target 95%")
-                    fig_pareto.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
+            # TABLA DE DETALLES
+            with st.expander("🔎 Ver detalle en tabla (Todas las versiones - Día por Día)"):
+                tabla_detalle = df_prod_linea.groupby(['Version', 'Maquina', 'Semana', 'Fecha'])['FTQ_Estacion'].mean().unstack(level=['Semana', 'Fecha'])
+                tabla_detalle = tabla_detalle.sort_index(axis=1)
+                
+                tabla_detalle.columns = pd.MultiIndex.from_tuples(
+                    [(f"W{int(sem)}", f.strftime('%d/%m/%Y')) for sem, f in tabla_detalle.columns],
+                    names=["Semana", "Fecha"]
+                )
+                
+                def aplicar_estilos_combinados(df_data):
+                    estilos = pd.DataFrame('', index=df_data.index, columns=df_data.columns)
                     
-                    fig_pareto.update_layout(
-                        title=dict(text=titulo_grafica, font=dict(size=16, color=COLOR_KOSTAL)), 
-                        yaxis=dict(title="FTQ (%)", range=[min(df_fecha['FTQ_Estacion'].min()-5, 75), 115]),
-                        xaxis=dict(title="Operación", type='category'),
-                        height=400, # Altura reducida para acomodar el scroll
-                        margin=dict(l=50, r=50, t=50, b=50)
-                    )
-                    
-                    st.plotly_chart(fig_pareto, use_container_width=True)
-
-
-                #tabla de detalles
-
-                with st.expander("🔎 Ver detalle en tabla (Todas las versiones - Día por Día)"):
-                    # Filtramos la producción general
-                    df_prod_linea = df_prod[df_prod['Version'].isin(versiones_permitidas)].copy()
-                    df_prod_linea['FTQ_Estacion'] = df_prod_linea['Factor'] * 100
-                    
-                    # Agrupamos fechas
-                    tabla_detalle = df_prod_linea.groupby(['Version', 'Maquina', 'Semana', 'Fecha'])['FTQ_Estacion'].mean().unstack(level=['Semana', 'Fecha'])
-                    
-                    # Aseguramos que las columnas (fechas) se ordenen cronológicamente de izquierda a derecha
-                    tabla_detalle = tabla_detalle.sort_index(axis=1)
-                     
-                    # Fecha (ej: 21/07/2026)
-                    tabla_detalle.columns = pd.MultiIndex.from_tuples(
-                        [(f"W{int(sem)}", fecha.strftime('%d/%m/%Y')) for sem, fecha in tabla_detalle.columns],
-                        names=["Semana", "Fecha"]
-                    )
-                    
-                    # Función de colores combinados
-                    def aplicar_estilos_combinados(df_data):
-                        estilos = pd.DataFrame('', index=df_data.index, columns=df_data.columns)
+                    for col in df_data.columns:
+                        min_val = df_data[col].min()
                         
-                        for col in df_data.columns:
-                            min_val = df_data[col].min()
+                        for idx in df_data.index:
+                            val = df_data.at[idx, col]
+                            version_fila = str(idx[0]) 
                             
-                            for idx in df_data.index:
-                                val = df_data.at[idx, col]
-                                version_fila = str(idx[0]) 
+                            is_min = pd.notna(val) and val == min_val
+                            is_selected = (version_fila == str(version_sel))
+                            
+                            if is_min:
+                                estilos.at[idx, col] = 'background-color: #ffe600; color: black; font-weight: bold;'
+                            elif is_selected:
+                                estilos.at[idx, col] = 'background-color: #e0e0e0; color: black;'
                                 
-                                is_min = pd.notna(val) and val == min_val
-                                is_selected = (version_fila == str(version_sel))
-                                
-                                if is_min:
-                                    estilos.at[idx, col] = 'background-color: #ffe600; color: black; font-weight: bold;'
-                                elif is_selected:
-                                    estilos.at[idx, col] = 'background-color: #e0e0e0; color: black;'
-                                    
-                        return estilos
-                        
-                    # Aplicamos formato y creamos la tabla
-                    tabla_estilizada = tabla_detalle.style.apply(aplicar_estilos_combinados, axis=None).format("{:.1f}%", na_rep="-")
+                    return estilos
                     
-                    st.dataframe(tabla_estilizada, use_container_width=True)
-                    
-            else:
-                st.info("No hay datos calculables para las operaciones.")
+                tabla_estilizada = tabla_detalle.style.apply(aplicar_estilos_combinados, axis=None).format("{:.1f}%", na_rep="-")
+                st.dataframe(tabla_estilizada, use_container_width=True)
+                
+        else:
+            st.info("No hay datos calculables para las operaciones.")
         
         st.divider()
-
 
         # DETALLE SEMANAL
         st.header(f"📅 Detalle Semanal")
