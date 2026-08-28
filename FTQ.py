@@ -14,7 +14,6 @@ COLOR_ACTION = "#dc3545"
 st.title("📊 FTQ - MERCEDES BENZ")
 st.markdown("*(Working model 1 Shift x 5 days)*")
 
-# ttl=300 lee el Excel cada 5 minutos automáticamente
 @st.cache_data(ttl=300)
 def procesar_datos_completos(filepath):
     if filepath.endswith('.xlsx') or filepath.endswith('.xls'):
@@ -22,35 +21,31 @@ def procesar_datos_completos(filepath):
     else:
         df_raw = pd.read_csv(filepath, header=3)
     
-    # --- DATOS DE PRODUCCIÓN ---
     df_prod = df_raw.iloc[:, 1:11].copy()
     df_prod.columns = ['Fecha', 'Semana', 'Linea', 'Maquina', 'Version', 'OK', 'NOK', 'Div', 'FTQ_Orig', 'Pct']
     
     df_prod = df_prod.dropna(subset=['Fecha', 'Version'])
-    df_prod['Version'] = df_prod['Version'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_prod['Version'] = df_prod['Version'].astype(str).str.split('.').str[0].str.strip()
     df_prod['OK'] = pd.to_numeric(df_prod['OK'], errors='coerce').fillna(0)
     df_prod['NOK'] = pd.to_numeric(df_prod['NOK'], errors='coerce').fillna(0)
     df_prod['Fecha'] = pd.to_datetime(df_prod['Fecha'])
-    df_prod['Semana'] = pd.to_numeric(df_prod['Semana'], errors='coerce').astype(int)
+    df_prod['Semana'] = pd.to_numeric(df_prod['Semana'], errors='coerce').fillna(0).astype(int)
     df_prod['Maquina'] = df_prod['Maquina'].astype(str)
     
-    # Factor y FTQ general
     df_prod['Factor'] = df_prod.apply(lambda r: (1 - (r['NOK']/r['OK'])) if r['OK'] > 0 else 1.0, axis=1)
     df_ftq = df_prod.groupby(['Fecha', 'Semana', 'Version'])['Factor'].prod().reset_index()
     df_ftq['FTQ'] = df_ftq['Factor'] * 100
     df_ftq['Mes_Num'] = df_ftq['Fecha'].dt.month
 
-    # --- DATOS DE DEFECTOS ---
     df_def = df_raw.iloc[:, 12:19].copy()
     df_def.columns = ['Fecha', 'Semana', 'Linea', 'Maquina', 'Version', 'Defecto', 'Cantidad']
     df_def = df_def.dropna(subset=['Defecto', 'Cantidad'])
-    df_def['Version'] = df_def['Version'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_def['Version'] = df_def['Version'].astype(str).str.split('.').str[0].str.strip()
     df_def['Cantidad'] = pd.to_numeric(df_def['Cantidad'], errors='coerce').fillna(0)
     df_def['Fecha'] = pd.to_datetime(df_def['Fecha'])
     df_def['Semana'] = pd.to_numeric(df_def['Semana'], errors='coerce').fillna(0).astype(int)
     df_def['Maquina'] = df_def['Maquina'].astype(str)
 
-    # Retornamos df_prod también para poder analizar el FTQ por máquina
     return df_prod, df_ftq, df_def
 
 def generar_grafica_fallas(df, top_n, titulo):
@@ -82,32 +77,27 @@ archivo_bd = "BASE DE DATOS.xlsx"
 if os.path.exists(archivo_bd):
     df_prod, df_ftq, df_def = procesar_datos_completos(archivo_bd)
     
-    # --- MENÚ LATERAL: LÍNEA Y VERSIÓN ---
     st.sidebar.header("Filtros de Análisis")
     linea_sel = st.sidebar.radio("Selecciona la Línea:", ["SCR", "SCCM"])
     
-    # Mapeo de versiones según la línea seleccionada
     if linea_sel == "SCR":
         versiones_permitidas = ["10532587"]
     else:
-        #
         versiones_permitidas = ["12289497", "12289475"] 
 
-    # Filtramos para mostrar solo las versiones que existen y pertenecen a la línea elegida
     versiones_reales = df_ftq['Version'].dropna().unique()
     versiones_disponibles = [v for v in versiones_permitidas if v in versiones_reales]
 
     if len(versiones_disponibles) > 0:
         version_sel = st.sidebar.selectbox("Selecciona la Versión", versiones_disponibles)
         
-        # Filtramos todas las tablas por la versión seleccionada
         df_ftq_l = df_ftq[df_ftq['Version'] == version_sel].sort_values('Fecha')
         df_def_l = df_def[df_def['Version'] == version_sel]
         df_prod_l = df_prod[df_prod['Version'] == version_sel]
         
         titulo_seccion = f"{linea_sel} - Versión {version_sel}"
         
-        # ANÁLISIS GENERAL
+        # Analisis General
         st.header(f"📈 Análisis General - {titulo_seccion}")
         
         resumen_gen = []
@@ -122,7 +112,7 @@ if os.path.exists(archivo_bd):
             
             sem_data = df_ftq_l[df_ftq_l['Mes_Num'] == ultimo_mes].groupby('Semana')['FTQ'].mean().reset_index()
             for _, r in sem_data.iterrows(): resumen_gen.append({'P': f"W{int(r['Semana'])}", 'V': r['FTQ']})
-    
+        
         df_g = pd.DataFrame(resumen_gen)
         
         if not df_g.empty:
@@ -139,34 +129,60 @@ if os.path.exists(archivo_bd):
 
         st.divider()
 
-        # DESGLOSE POR OPERACIÓN - GRAFICA
+        # Detalle Semanal
+        st.header(f"📅 Detalle Semanal")
+        if not df_ftq_l.empty:
+            sem_sel = st.selectbox("Seleccione Semana:", sorted(df_ftq_l['Semana'].unique()), index=len(df_ftq_l['Semana'].unique())-1)
+            
+            df_s = df_ftq_l[df_ftq_l['Semana'] == sem_sel]
+            if not df_s.empty:
+                inicio = df_s['Fecha'].min() - timedelta(days=df_s['Fecha'].min().weekday())
+                dias = [inicio + timedelta(days=i) for i in range(5)]
+                df_r = pd.merge(pd.DataFrame({'Fecha': dias}), df_s, on='Fecha', how='left').fillna({'FTQ': 100.0})
+                df_r['F_Str'] = df_r['Fecha'].dt.strftime('%A %d-%b')
+                
+                fig_s = go.Figure(go.Scatter(x=df_r['F_Str'], y=df_r['FTQ'], mode='lines+markers+text', text=[f"{v:.1f}%" for v in df_r['FTQ']], textposition="top center", line=dict(color=COLOR_KOSTAL, width=3)))
+                fig_s.add_hline(y=95, line_color=COLOR_TARGET)
+                fig_s.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION)
+                fig_s.update_layout(yaxis_range=[min(df_r['FTQ'].min()-5, 75), 115])
+                st.plotly_chart(fig_s, use_container_width=True)
+            else:
+                st.info("No se registraron datos en esta semana.")
 
-        st.header("⚙️ Quality - FPY")
-        #st.markdown("Rendimiento de calidad")
+            df_def_s = df_def_l[df_def_l['Semana'] == sem_sel]
+
+            fig_p_maq = generar_grafica_operaciones(df_def_s, 5, f"Mayores Ofensores por Operación - Semana {sem_sel}")
+            if fig_p_maq: st.plotly_chart(fig_p_maq, use_container_width=True)
+
+            fig_p_sem = generar_grafica_fallas(df_def_s, 5, f"Principales Fallas - Semana {sem_sel}")
+            if fig_p_sem: st.plotly_chart(fig_p_sem, use_container_width=True)
+            
+        else:
+            st.info("No hay datos semanales para la versión seleccionada.")
+            
+        st.divider()
+
+        # Desglose por operación
+        st.header("⚙️ FTQ por Operación")
+        #st.markdown("Rendimiento de calidad.")
         
         df_prod_linea = df_prod[df_prod['Version'].isin(versiones_permitidas)].copy()
         
         if not df_prod_linea.empty:
             df_prod_linea['FTQ_Estacion'] = df_prod_linea['Factor'] * 100
-            df_prod_linea['Maquina'] = df_prod_linea['Maquina'].astype(str) # Aseguramos formato texto
+            df_prod_linea['Maquina'] = df_prod_linea['Maquina'].astype(str)
             
-            # Paleta de distintos tonos de azul
             PALETA_AZULES = ["#004b87", "#3b82f6", "#87ceeb", "#1e3a8a", "#60a5fa", "#b0c4de"]
             
-            # Grafica por semana
             datos_semanales = df_prod_linea.groupby(['Semana', 'Fecha', 'Maquina', 'Version'])['FTQ_Estacion'].mean().reset_index()
             semanas_presentes = sorted(datos_semanales['Semana'].unique())
-
+            
             if semanas_presentes:
-                # Siguiente pagina
                 if 'pagina_semana' not in st.session_state:
-                    # Semana más reciente por defecto
                     st.session_state.pagina_semana = len(semanas_presentes) - 1 
                 
-                # Protección
                 st.session_state.pagina_semana = min(st.session_state.pagina_semana, len(semanas_presentes) - 1)
                 
-                # Creamos 3 columnas: Botón Izquierdo, Título Central, Botón Derecho
                 col_izq, col_centro, col_der = st.columns([1, 6, 1])
                 
                 with col_izq:
@@ -179,13 +195,11 @@ if os.path.exists(archivo_bd):
                         st.session_state.pagina_semana += 1
                         st.rerun()
                 
-                # Identificamos qué semana graficar basándonos en los botones
                 sem_actual = semanas_presentes[st.session_state.pagina_semana]
                 
                 with col_centro:
                     st.markdown(f"<h4 style='text-align: center; margin-top: 10px; color: {COLOR_KOSTAL};'>Semana W{int(sem_actual)}</h4>", unsafe_allow_html=True)
 
-                # Solo grafica la semana seleccionada
                 df_sem = datos_semanales[datos_semanales['Semana'] == sem_actual].copy()
                 
                 def ordenar_maquinas(m):
@@ -198,7 +212,7 @@ if os.path.exists(archivo_bd):
                 
                 fig_pareto = go.Figure()
                 corridas = df_sem[['Fecha', 'Version']].drop_duplicates().sort_values(by=['Fecha', 'Version'])
-
+                
                 for i, (_, row) in enumerate(corridas.iterrows()):
                     f = row['Fecha']
                     v = row['Version']
@@ -208,10 +222,8 @@ if os.path.exists(archivo_bd):
                     nombre_barra = f"{fecha_str} (Ver. {v})"
                     
                     color_barra = PALETA_AZULES[i % len(PALETA_AZULES)]
-                    
                     min_ftq = df_corrida['FTQ_Estacion'].min()
                     
-                    #  ⚠️
                     text_labels = []
                     for val in df_corrida['FTQ_Estacion']:
                         if pd.notna(val) and val == min_ftq:
@@ -229,11 +241,11 @@ if os.path.exists(archivo_bd):
                         textfont=dict(size=14)
                     ))
                 
-                fig_pareto.add_hline(y=95, line_color=COLOR_TARGET, annotation_text="Target 95%")
-                fig_pareto.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
+                #fig_pareto.add_hline(y=95, line_color=COLOR_TARGET, annotation_text="Target 95%")
+                #fig_pareto.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
                 
                 fig_pareto.update_layout(
-                    title=dict(text=f"Semana W{int(sem_actual)} - Rendimiento por operación", font=dict(size=16, color=COLOR_KOSTAL)),
+                    title=dict(text=f"Semana W{int(sem_actual)} - Rendimiento por Operación", font=dict(size=16, color=COLOR_KOSTAL)),
                     yaxis=dict(title="FTQ (%)", range=[min(df_sem['FTQ_Estacion'].min()-10, 70), 115]),
                     xaxis=dict(
                         title="Operación", 
@@ -249,7 +261,6 @@ if os.path.exists(archivo_bd):
                 
                 st.plotly_chart(fig_pareto, use_container_width=True)
                     
-            # TABLA DE DETALLES 
             with st.expander("🔎 Ver detalle en tabla (Todas las versiones - Día por Día)"):
                 tabla_detalle = df_prod_linea.groupby(['Version', 'Maquina', 'Semana', 'Fecha'])['FTQ_Estacion'].mean().unstack(level=['Semana', 'Fecha'])
                 tabla_detalle = tabla_detalle.sort_index(axis=1)
@@ -284,39 +295,6 @@ if os.path.exists(archivo_bd):
                 
         else:
             st.info("No hay datos calculables para las operaciones.")
-        
-        st.divider()
-
-        # DETALLE SEMANAL
-        st.header(f"📅 Detalle Semanal")
-        if not df_ftq_l.empty:
-            sem_sel = st.selectbox("Seleccione Semana:", sorted(df_ftq_l['Semana'].unique()), index=len(df_ftq_l['Semana'].unique())-1)
-            
-            df_s = df_ftq_l[df_ftq_l['Semana'] == sem_sel]
-            if not df_s.empty:
-                inicio = df_s['Fecha'].min() - timedelta(days=df_s['Fecha'].min().weekday())
-                dias = [inicio + timedelta(days=i) for i in range(5)]
-                df_r = pd.merge(pd.DataFrame({'Fecha': dias}), df_s, on='Fecha', how='left').fillna({'FTQ': 100.0})
-                df_r['F_Str'] = df_r['Fecha'].dt.strftime('%A %d-%b')
-                
-                fig_s = go.Figure(go.Scatter(x=df_r['F_Str'], y=df_r['FTQ'], mode='lines+markers+text', text=[f"{v:.1f}%" for v in df_r['FTQ']], textposition="top center", line=dict(color=COLOR_KOSTAL, width=3)))
-                fig_s.add_hline(y=95, line_color=COLOR_TARGET)
-                fig_s.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION)
-                fig_s.update_layout(yaxis_range=[min(df_r['FTQ'].min()-5, 75), 115])
-                st.plotly_chart(fig_s, use_container_width=True)
-            else:
-                st.info("No se registraron datos en esta semana.")
-
-            df_def_s = df_def_l[df_def_l['Semana'] == sem_sel]
-
-            fig_p_maq = generar_grafica_operaciones(df_def_s, 5, f"Mayores Ofensores por Operación - Semana {sem_sel}")
-            if fig_p_maq: st.plotly_chart(fig_p_maq, use_container_width=True)
-
-            fig_p_sem = generar_grafica_fallas(df_def_s, 5, f"Principales Fallas - Semana {sem_sel}")
-            if fig_p_sem: st.plotly_chart(fig_p_sem, use_container_width=True)
-            
-        else:
-            st.info("No hay datos semanales para la versión seleccionada.")
             
     else:
         st.warning(f"Aún no hay datos cargados para la línea {linea_sel}.")
