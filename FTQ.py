@@ -163,7 +163,7 @@ if os.path.exists(archivo_bd):
         st.divider()
 
         # Desglose por operación
-        st.header("⚙️ FTQ por Operación")
+        st.header("⚙️ Quality - FPY")
         #st.markdown("Rendimiento de calidad.")
         
         df_prod_linea = df_prod[df_prod['Version'].isin(versiones_permitidas)].copy()
