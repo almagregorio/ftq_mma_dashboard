@@ -141,31 +141,34 @@ if os.path.exists(archivo_bd):
 
         # DESGLOSE POR OPERACIÓN - GRAFICA
 
-        st.header("⚙️ FTQ por Operación")
-        st.markdown("Rendimiento de calidad por semana.")
+        st.header("⚙️ FPY")
+        #st.markdown("Rendimiento de calidad")
         
         df_prod_linea = df_prod[df_prod['Version'].isin(versiones_permitidas)].copy()
         
         if not df_prod_linea.empty:
             df_prod_linea['FTQ_Estacion'] = df_prod_linea['Factor'] * 100
             
-            # --- 1. GRÁFICAS PARETO POR SEMANA ---
+            PALETA_AZULES = ["#004b87", "#3b82f6", "#87ceeb", "#1e3a8a", "#60a5fa", "#b0c4de"]
+            
+            # GRÁFICAS POR SEMANA
             datos_semanales = df_prod_linea.groupby(['Semana', 'Fecha', 'Maquina', 'Version'])['FTQ_Estacion'].mean().reset_index()
             semanas_presentes = sorted(datos_semanales['Semana'].unique())
             
             for sem in semanas_presentes:
                 df_sem = datos_semanales[datos_semanales['Semana'] == sem].copy()
                 
-                # Determinamos el orden del Pareto (eje X) tomando el FTQ más bajo que haya tenido la máquina en toda la semana
-                orden_maquinas = df_sem.groupby('Maquina')['FTQ_Estacion'].min().sort_values().index.astype(str).tolist()
+                def ordenar_maquinas(m):
+                    try: return (0, int(m))
+                    except: return (1, str(m))
+                orden_maquinas = [str(x) for x in sorted(df_sem['Maquina'].unique(), key=ordenar_maquinas)]
                 
                 titulo_grafica = f"Semana W{int(sem)} - Rendimiento por Operación"
                 fig_pareto = go.Figure()
                 
-                # Extraemos todas las corridas únicas (combinación de Fecha y Versión) de esa semana
                 corridas = df_sem[['Fecha', 'Version']].drop_duplicates().sort_values(by=['Fecha', 'Version'])
                 
-                for _, row in corridas.iterrows():
+                for i, (_, row) in enumerate(corridas.iterrows()):
                     f = row['Fecha']
                     v = row['Version']
                     df_corrida = df_sem[(df_sem['Fecha'] == f) & (df_sem['Version'] == v)]
@@ -173,35 +176,57 @@ if os.path.exists(archivo_bd):
                     fecha_str = pd.to_datetime(f).strftime('%d/%m')
                     nombre_barra = f"{fecha_str} (Ver. {v})"
                     
+                    # Asignacion de color
+                    color_barra = PALETA_AZULES[i % len(PALETA_AZULES)]
+                    
                     fig_pareto.add_trace(go.Bar(
                         x=df_corrida['Maquina'].astype(str), 
                         y=df_corrida['FTQ_Estacion'], 
                         name=nombre_barra,
                         text=[f"{val:.1f}%" for val in df_corrida['FTQ_Estacion']], 
-                        textposition='auto'
+                        textposition='auto',
+                        marker_color=color_barra
                     ))
+                    
+                    # 3. Advertencia en FTQ bajo
+                    if not df_corrida.empty:
+                        min_ftq = df_corrida['FTQ_Estacion'].min()
+                        peor_maquina = df_corrida[df_corrida['FTQ_Estacion'] == min_ftq]['Maquina'].iloc[0]
+                        
+                        fig_pareto.add_annotation(
+                            x=str(peor_maquina),
+                            y=min_ftq,
+                            text="⚠️",
+                            showarrow=True,
+                            arrowhead=0,
+                            yshift=5,
+                            ax=0,
+                            ay=-30,
+                            font=dict(size=22),
+                            hovertext=f"Mayor ofensor del {fecha_str}"
+                        )
                 
                 fig_pareto.add_hline(y=95, line_color=COLOR_TARGET, annotation_text="Target 95%")
                 fig_pareto.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
                 
                 fig_pareto.update_layout(
                     title=dict(text=titulo_grafica, font=dict(size=16, color=COLOR_KOSTAL)), 
-                    yaxis=dict(title="FTQ (%)", range=[min(df_sem['FTQ_Estacion'].min()-5, 75), 115]),
+                    yaxis=dict(title="FTQ (%)", range=[min(df_sem['FTQ_Estacion'].min()-5, 75), 125]),
                     xaxis=dict(
                         title="Operación", 
                         type='category',
                         categoryorder='array',
                         categoryarray=orden_maquinas
                     ),
-                    barmode='group', # Agrupa todas las barras de las distintas corridas en su respectiva máquina
-                    height=500,
-                    margin=dict(l=50, r=50, t=50, b=50),
-                    legend=dict(title="Día y Versión")
-                )
+                barmode='group', 
+                height=500,
+                margin=dict(l=50, r=50, t=50, b=50),
+                legend=dict(title="Día y Versión")
+            )
                 
-                st.plotly_chart(fig_pareto, use_container_width=True)
+            st.plotly_chart(fig_pareto, use_container_width=True)
                     
-            # TABLA DE DETALLES
+            # --- 2. TABLA DE DETALLES (MÚLTIPLES VERSIONES - DÍA POR DÍA CON SEMANA) ---
             with st.expander("🔎 Ver detalle en tabla (Todas las versiones - Día por Día)"):
                 tabla_detalle = df_prod_linea.groupby(['Version', 'Maquina', 'Semana', 'Fecha'])['FTQ_Estacion'].mean().unstack(level=['Semana', 'Fecha'])
                 tabla_detalle = tabla_detalle.sort_index(axis=1)
