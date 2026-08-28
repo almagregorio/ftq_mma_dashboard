@@ -14,7 +14,7 @@ COLOR_ACTION = "#dc3545"
 st.title("📊 FTQ - MERCEDES BENZ")
 st.markdown("*(Working model 1 Shift x 5 days)*")
 
-# ttl=300 hace que vuelva a leer el Excel cada 5 minutos automáticamente
+# ttl=300 lee el Excel cada 5 minutos automáticamente
 @st.cache_data(ttl=300)
 def procesar_datos_completos(filepath):
     if filepath.endswith('.xlsx') or filepath.endswith('.xls'):
@@ -144,7 +144,7 @@ if os.path.exists(archivo_bd):
         st.markdown("Evolución semanal del FTQ simultánea para todas las estaciones.")
         
         if not df_prod_l.empty:
-            # Calculamos el FTQ agrupando por Semana y Máquina a la vez
+            # Grafica FTQ por operacion - Seleccionada
             df_op = df_prod_l.copy()
             df_op['FTQ_Estacion'] = df_op['Factor'] * 100
             tendencia_todas = df_op.groupby(['Semana', 'Maquina'])['FTQ_Estacion'].mean().reset_index()
@@ -176,28 +176,51 @@ if os.path.exists(archivo_bd):
                 )
                 st.plotly_chart(fig_op, use_container_width=True)
 
-                with st.expander("🔎 Ver detalle en tabla"):
-                    # 1. Crear tabla dinámica (Filas: Máquinas, Columnas: Semanas)
-                    tabla_detalle = df_op.groupby(['Maquina', 'Semana'])['FTQ_Estacion'].mean().unstack()
+                with st.expander("🔎 Ver detalle en tabla (Todas las versiones - Día por Día)"):
+                    # Filtramos la producción general usando solo las versiones permitidas de la línea elegida
+                    df_prod_linea = df_prod[df_prod['Version'].isin(versiones_permitidas)].copy()
+                    df_prod_linea['FTQ_Estacion'] = df_prod_linea['Factor'] * 100
                     
-                    # 2. Formatear los encabezados de las columnas para que digan "W30", "W31", etc.
-                    # Nota: Al estar agrupado por semana, omitimos "Fecha" diaria. La Versión ya está filtrada a nivel global.
-                    tabla_detalle.columns = [f"W{int(c)}" for c in tabla_detalle.columns]
+                    # Agrupamos usando FECHA en lugar de Semana para ver el día a día real
+                    tabla_detalle = df_prod_linea.groupby(['Version', 'Maquina', 'Fecha'])['FTQ_Estacion'].mean().unstack()
                     
-                    # 3. Función para pintar de amarillo el valor más bajo de cada columna (semana)
-                    def resaltar_minimo(s):
-                        es_minimo = s == s.min()
-                        return ['background-color: #ffe600; color: black; font-weight: bold' if v else '' for v in es_minimo]
+                    # Aseguramos que las columnas (fechas) se ordenen cronológicamente de izquierda a derecha
+                    tabla_detalle = tabla_detalle.sort_index(axis=1)
                     
-                    # 4. Aplicar los estilos: % con 1 decimal y la función de color
-                    tabla_estilizada = tabla_detalle.style.apply(resaltar_minimo, axis=0).format("{:.1f}%", na_rep="-")
+                    # Convertimos el formato de fecha del encabezado a un texto legible (ej: 21/07/2026)
+                    tabla_detalle.columns = [d.strftime('%d/%m/%Y') for d in tabla_detalle.columns]
+                    
+                    # Función de colores combinados
+                    def aplicar_estilos_combinados(df_data):
+                        estilos = pd.DataFrame('', index=df_data.index, columns=df_data.columns)
+                        
+                        for col in df_data.columns:
+                            min_val = df_data[col].min()
+                            
+                            for idx in df_data.index:
+                                val = df_data.at[idx, col]
+                                version_fila = str(idx[0]) 
+                                
+                                is_min = pd.notna(val) and val == min_val
+                                is_selected = (version_fila == str(version_sel))
+                                
+                                if is_min:
+                                    estilos.at[idx, col] = 'background-color: #ffe600; color: black; font-weight: bold;'
+                                elif is_selected:
+                                    estilos.at[idx, col] = 'background-color: #e0e0e0; color: black;'
+                                    
+                        return estilos
+                        
+                    # Aplicamos formato y creamos la tabla final
+                    tabla_estilizada = tabla_detalle.style.apply(aplicar_estilos_combinados, axis=None).format("{:.1f}%", na_rep="-")
                     
                     st.dataframe(tabla_estilizada, use_container_width=True)
-
+                    
             else:
                 st.info("No hay datos calculables para las operaciones.")
         
         st.divider()
+
 
         # DETALLE SEMANAL
         st.header(f"📅 Detalle Semanal")
