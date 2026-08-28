@@ -141,7 +141,7 @@ if os.path.exists(archivo_bd):
 
         # DESGLOSE POR OPERACIÓN - GRAFICA
 
-        st.header("⚙️ FPY")
+        st.header("⚙️ Quality - FPY")
         #st.markdown("Rendimiento de calidad")
         
         df_prod_linea = df_prod[df_prod['Version'].isin(versiones_permitidas)].copy()
@@ -153,14 +153,41 @@ if os.path.exists(archivo_bd):
             # Paleta de distintos tonos de azul
             PALETA_AZULES = ["#004b87", "#3b82f6", "#87ceeb", "#1e3a8a", "#60a5fa", "#b0c4de"]
             
-            # --- 1. GRÁFICAS POR SEMANA ---
+            # Grafica por semana
             datos_semanales = df_prod_linea.groupby(['Semana', 'Fecha', 'Maquina', 'Version'])['FTQ_Estacion'].mean().reset_index()
             semanas_presentes = sorted(datos_semanales['Semana'].unique())
-            
-            for sem in semanas_presentes:
-                df_sem = datos_semanales[datos_semanales['Semana'] == sem].copy()
+
+            if semanas_presentes:
+                # Siguiente pagina
+                if 'pagina_semana' not in st.session_state:
+                    # Semana más reciente por defecto
+                    st.session_state.pagina_semana = len(semanas_presentes) - 1 
                 
-                # Ordenar máquinas secuencialmente (Limpia decimales ocultos como 100.0 a 100)
+                # Protección
+                st.session_state.pagina_semana = min(st.session_state.pagina_semana, len(semanas_presentes) - 1)
+                
+                # Creamos 3 columnas: Botón Izquierdo, Título Central, Botón Derecho
+                col_izq, col_centro, col_der = st.columns([1, 6, 1])
+                
+                with col_izq:
+                    if st.button("⬅️ Anterior", disabled=(st.session_state.pagina_semana == 0)):
+                        st.session_state.pagina_semana -= 1
+                        st.rerun()
+                        
+                with col_der:
+                    if st.button("Siguiente ➡️", disabled=(st.session_state.pagina_semana == len(semanas_presentes) - 1)):
+                        st.session_state.pagina_semana += 1
+                        st.rerun()
+                
+                # Identificamos qué semana graficar basándonos en los botones
+                sem_actual = semanas_presentes[st.session_state.pagina_semana]
+                
+                with col_centro:
+                    st.markdown(f"<h4 style='text-align: center; margin-top: 10px; color: {COLOR_KOSTAL};'>Semana W{int(sem_actual)}</h4>", unsafe_allow_html=True)
+
+                # Solo grafica la semana seleccionada
+                df_sem = datos_semanales[datos_semanales['Semana'] == sem_actual].copy()
+                
                 def ordenar_maquinas(m):
                     try:
                         m_clean = str(m).replace('.0', '')
@@ -169,11 +196,9 @@ if os.path.exists(archivo_bd):
                         return (1, str(m))
                 orden_maquinas = [str(x) for x in sorted(df_sem['Maquina'].unique(), key=ordenar_maquinas)]
                 
-                titulo_grafica = f"Semana W{int(sem)} - Rendimiento por Operación"
                 fig_pareto = go.Figure()
-                
                 corridas = df_sem[['Fecha', 'Version']].drop_duplicates().sort_values(by=['Fecha', 'Version'])
-                
+
                 for i, (_, row) in enumerate(corridas.iterrows()):
                     f = row['Fecha']
                     v = row['Version']
@@ -186,7 +211,7 @@ if os.path.exists(archivo_bd):
                     
                     min_ftq = df_corrida['FTQ_Estacion'].min()
                     
-                    # 💡 SOLUCIÓN: Incrustamos el ⚠️ directamente en el texto del % de la barra afectada
+                    #  ⚠️
                     text_labels = []
                     for val in df_corrida['FTQ_Estacion']:
                         if pd.notna(val) and val == min_ftq:
@@ -208,13 +233,13 @@ if os.path.exists(archivo_bd):
                 fig_pareto.add_hline(y=85, line_dash="dash", line_color=COLOR_ACTION, annotation_text="Action Limit 85%")
                 
                 fig_pareto.update_layout(
-                    title=dict(text=titulo_grafica, font=dict(size=16, color=COLOR_KOSTAL)), 
+                    title=dict(title=f"Semana W{int(sem_actual)} - Rendimiento por operación", font=dict(size=16, color=COLOR_KOSTAL)), 
                     yaxis=dict(title="FTQ (%)", range=[min(df_sem['FTQ_Estacion'].min()-10, 70), 115]),
                     xaxis=dict(
                         title="Operación", 
                         type='category',
                         categoryorder='array',
-                        categoryarray=orden_maquinas # Fuerza el orden correcto 100, 200...
+                        categoryarray=orden_maquinas
                     ),
                     barmode='group', 
                     height=500,
