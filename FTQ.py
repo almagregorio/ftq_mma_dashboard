@@ -83,7 +83,7 @@ if os.path.exists(archivo_bd):
     if linea_sel == "SCR":
         versiones_permitidas = ["10532587"]
     else:
-        versiones_permitidas = ["12289497", "12289475"] 
+        versiones_permitidas = ["12289497", "12289475","12289507"] 
 
     versiones_reales = df_ftq['Version'].dropna().unique()
     versiones_disponibles = [v for v in versiones_permitidas if v in versiones_reales]
